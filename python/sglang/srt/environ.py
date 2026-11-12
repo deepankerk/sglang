@@ -1921,6 +1921,7 @@ class Envs:
     # by rayon dispatch and the id merge.
     SGLANG_PARALLEL_PROMPT_ENCODE_MIN_CHARS = EnvInt(32768)
     SGLANG_REQUEST_STATE_WAIT_TIMEOUT = EnvInt(4)
+    SGLANG_TOKENIZE_PREFIX_CACHE = EnvBool(False)
     SGLANG_DEFAULT_THINKING = EnvBool(False)
 
     # ===================================================================

@@ -711,6 +711,18 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             )
         else:
             self.async_dynamic_batch_tokenizer = None
+        self.prefix_tokenize_cache = None
+        if (
+            envs.SGLANG_TOKENIZE_PREFIX_CACHE.get()
+            and self.tokenizer is not None
+            and getattr(self.tokenizer, "is_fast", False)
+        ):
+            from sglang.srt.managers.prefix_tokenize_cache import PrefixTokenizeCache
+
+            self.prefix_tokenize_cache = PrefixTokenizeCache(self.tokenizer)
+            logger.info(
+                "Prefix tokenization cache enabled (SGLANG_TOKENIZE_PREFIX_CACHE=1)"
+            )
 
     def _validate_cuda_vmm_feature_transport_support(self) -> None:
         if get_mm().mm_feature_transport != "cuda_vmm":
@@ -1134,6 +1146,16 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             if not is_cross_encoder and (not getattr(self.tokenizer, "is_fast", False)):
                 input_ids = [self.tokenizer.encode(t) for t in tokenizer_input]
                 token_type_ids = None
+            elif (
+                not is_cross_encoder
+                and self.prefix_tokenize_cache is not None
+                and len(tokenizer_input) == 1
+            ):
+                input_ids = [self.prefix_tokenize_cache.encode(tokenizer_input[0])]
+                token_type_ids = None
+                n = self.prefix_tokenize_cache.hits + self.prefix_tokenize_cache.misses
+                if n % 200 == 0:
+                    logger.info(self.prefix_tokenize_cache.stats())
             else:
                 encoded = self.tokenizer(tokenizer_input, **tokenizer_kwargs)
                 input_ids = encoded["input_ids"]
