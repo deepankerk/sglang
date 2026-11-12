@@ -1699,6 +1699,14 @@ class Envs:
     # Speculative decoding
     # ===================================================================
     SGLANG_ENABLE_OVERLAP_PLAN_STREAM = EnvBool(False)
+    # Profiler-free wall timers for the speculative decode cycle
+    # (speculative/spec_stage_timing.py): off | async (CPU enqueue wall per
+    # stage) | sync (torch.cuda.synchronize() at stage boundaries, so walls
+    # include GPU work; attribution only, slows serving).
+    SGLANG_SPEC_STAGE_TIMING = EnvStr("off")
+    SGLANG_SPEC_STAGE_TIMING_INTERVAL = EnvInt(2000)
+    # Log the CPU wall of CUDAGraph.replay() per graph runner and batch size.
+    SGLANG_CUDA_GRAPH_REPLAY_TIMING = EnvBool(False)
     # Experimental: allow pipeline parallelism x speculative decoding
     # (EAGLE/MTP). Off by default; see the PP+spec RFC for constraints
     # (non-overlap schedule, no DP attention).

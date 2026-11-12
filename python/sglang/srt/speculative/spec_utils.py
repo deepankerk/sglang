@@ -41,6 +41,7 @@ from sglang.srt.runtime_context import (
     mamba_track_grid,
     max_speculative_num_draft_tokens,
 )
+from sglang.srt.speculative.spec_stage_timing import spec_stage_timer
 from sglang.srt.utils import (
     is_cuda,
     is_hip,
@@ -967,9 +968,17 @@ def _draft_without_cp(tp_context):
 
 def spec_stage_span(name: str):
     """Profiler span for a coarse speculative-decoding stage (``draft`` /
-    ``draft_extend`` / ``verify``).
+    ``draft_extend`` / ``verify``); also feeds SGLANG_SPEC_STAGE_TIMING.
     """
-    return profile_range(name)
+    if spec_stage_timer is None:
+        return profile_range(name)
+    return _timed_stage_span(name)
+
+
+@contextmanager
+def _timed_stage_span(name: str):
+    with profile_range(name), spec_stage_timer.stage(name):
+        yield
 
 
 def move_accept_tokens_to_target_kvcache(

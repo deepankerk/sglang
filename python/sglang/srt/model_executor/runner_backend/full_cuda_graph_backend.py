@@ -17,9 +17,11 @@ torch.cuda.CUDAGraph per shape.
 
 from __future__ import annotations
 
+import logging
+import time
 from contextlib import AbstractContextManager, contextmanager
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch
 
@@ -27,6 +29,7 @@ from sglang.srt.constants import GPU_MEMORY_TYPE_CUDA_GRAPH
 from sglang.srt.distributed.device_communicators.pynccl_allocator import (
     set_graph_pool_id,
 )
+from sglang.srt.environ import envs
 from sglang.srt.model_executor.runner_backend.base_graph_backend import (
     BaseGraphBackend,
 )
@@ -46,6 +49,10 @@ if TYPE_CHECKING:
         BaseCudaGraphRunner,
     )
     from sglang.srt.model_executor.runner.shape_key import ShapeKey
+
+logger = logging.getLogger(__name__)
+
+_REPLAY_TIMING_INTERVAL = 2000
 
 
 def _allocate_output_buffer(output: Any) -> Optional[Any]:
@@ -122,6 +129,9 @@ class FullCudaGraphBackend(BaseGraphBackend):
         self._memory_saver_adapter: Optional[Any] = TorchMemorySaverAdapter.create(
             enable=enable_memory_saver
             and get_bool_env_var("SGLANG_MEMORY_SAVER_CUDA_GRAPH")
+        )
+        self._replay_timing: Optional[Dict[Any, List[float]]] = (
+            {} if envs.SGLANG_CUDA_GRAPH_REPLAY_TIMING.get() else None
         )
 
     @contextmanager
@@ -231,9 +241,33 @@ class FullCudaGraphBackend(BaseGraphBackend):
         static_forward_batch: ForwardBatch,
         **kwargs,
     ) -> Any:
-        with graph_pool_replay_scope():
-            self._graphs[shape_key].replay()
+        if self._replay_timing is None:
+            with graph_pool_replay_scope():
+                self._graphs[shape_key].replay()
+        else:
+            start = time.perf_counter()
+            with graph_pool_replay_scope():
+                self._graphs[shape_key].replay()
+            self._record_replay_time(shape_key, time.perf_counter() - start)
         return self._outputs[shape_key]
+
+    def _record_replay_time(self, shape_key: ShapeKey, seconds: float) -> None:
+        # CPU wall of the launch only; the GPU runs the graph asynchronously.
+        timing = self._replay_timing
+        timing.setdefault(shape_key, []).append(seconds)
+        if sum(len(v) for v in timing.values()) < _REPLAY_TIMING_INTERVAL:
+            return
+        for key, values in timing.items():
+            values.sort()
+            logger.info(
+                "cuda graph replay timing (ms) runner=%s shape=%s: n=%d mean=%.3f p50=%.3f",
+                type(self._cuda_graph_runner).__name__,
+                key,
+                len(values),
+                1e3 * sum(values) / len(values),
+                1e3 * values[len(values) // 2],
+            )
+        timing.clear()
 
     def cleanup(self) -> None:
         for graph in self._graphs.values():

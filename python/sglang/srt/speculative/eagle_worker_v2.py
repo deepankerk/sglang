@@ -103,6 +103,7 @@ from sglang.srt.speculative.eagle_worker_common import (
 )
 from sglang.srt.speculative.pp_draft_embedding import resolve_draft_embed_and_head
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
+from sglang.srt.speculative.spec_stage_timing import spec_stage_timer
 from sglang.srt.speculative.spec_utils import (
     draft_pp_context,
     draft_tp_context,
@@ -1473,6 +1474,27 @@ class EAGLEWorkerV2(BaseSpecWorker):
         grammar_barrier=None,
         pp_proxy_tensors: Optional[PPProxyTensors] = None,
     ):
+        if spec_stage_timer is None:
+            return self._forward_batch_generation(
+                batch, on_publish, grammar_barrier, pp_proxy_tensors
+            )
+        if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
+            spec_stage_timer.break_period()
+            return self._forward_batch_generation(
+                batch, on_publish, grammar_barrier, pp_proxy_tensors
+            )
+        with spec_stage_timer.cycle(batch.seq_lens.shape[0]):
+            return self._forward_batch_generation(
+                batch, on_publish, grammar_barrier, pp_proxy_tensors
+            )
+
+    def _forward_batch_generation(
+        self,
+        batch: ScheduleBatch,
+        on_publish=None,
+        grammar_barrier=None,
+        pp_proxy_tensors: Optional[PPProxyTensors] = None,
+    ):
         self._wait_for_fused_hicache_load(batch)
         if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
             if not (
@@ -1534,11 +1556,12 @@ class EAGLEWorkerV2(BaseSpecWorker):
                     verify_input: EagleVerifyInput = self.draft_worker.draft(batch)
             assert verify_input.is_verify_input()
             batch.spec_info = verify_input
-            batch_output = self.verify(
-                batch,
-                pp_proxy_tensors=pp_proxy_tensors,
-                grammar_barrier=grammar_barrier,
-            )
+            with spec_stage_span("verify"):
+                batch_output = self.verify(
+                    batch,
+                    pp_proxy_tensors=pp_proxy_tensors,
+                    grammar_barrier=grammar_barrier,
+                )
             # Publish before draft_extend so the fence is at verify-end.
             if on_publish is not None:
                 on_publish(batch_output.new_seq_lens)
